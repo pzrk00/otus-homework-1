@@ -1,8 +1,7 @@
 import json
 import unittest
 
-from homework.log_analyzer import load_config, config, median, parse_line, calc_stat
-
+from log_analyzer import *
 
 class SimpleTest(unittest.TestCase):
     def test_load_config(self):
