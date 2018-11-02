@@ -1,8 +1,8 @@
 # otus-homework-1
 
-log analyzer
+## log analyzer
 
-запуск тестов: python3 test_log_analyzer.py
+запуск тестов: `python3 test_log_analyzer.py`
 
 тесты проверяют:
   1. загрузку конфигурационного файла
@@ -11,4 +11,4 @@ log analyzer
   4. парсинг некорректной строки лога
   5. подсчет статистики
   
-  боевой запуск: python3 log_analyzer.py
+  боевой запуск: `python3 log_analyzer.py`
