@@ -5,6 +5,7 @@ import gzip
 import json
 import logging
 import os
+import pathlib
 import re
 from datetime import datetime
 from pathlib import Path
@@ -176,6 +177,7 @@ def create_report(data, log_date, rep_path):
     :param rep_path: report path
     :return: none
     """
+    pathlib.Path(rep_path).mkdir(parents=True, exist_ok=True)
     report_date = datetime.strftime(log_date, '%Y.%m.%d')
     rep_file = os.path.join(rep_path, f'report-{report_date}.html')
     logging.info(rep_file)
