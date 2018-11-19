@@ -31,27 +31,6 @@ def get_config_filename():
     return args.config
 
 
-def merge_config(internal_config, config_from_file):
-    """
-    merge internal & external config files
-    :param internal_config:
-    :param config_from_file:
-    :return: merged config dict
-    """
-    result = dict()
-    for k in internal_config.keys():
-        if k in config_from_file.keys():
-            if k == 'REPORT_SIZE':
-                result[k] = int(config_from_file[k])
-            elif k == 'ERROR_PERCENT':
-                result[k] = float(config_from_file[k])
-            else:
-                result[k] = config_from_file[k]
-        else:
-            result[k] = internal_config[k]
-    return result
-
-
 def load_config(internal_config, cfg_filename):
     """
     load external config file(yaml) if exist
@@ -66,7 +45,7 @@ def load_config(internal_config, cfg_filename):
         except Exception as e:
             logging.exception(e)
             return None
-        return merge_config(internal_config, cfg)
+        return {**internal_config, **cfg}
     else:
         return internal_config
 
@@ -189,15 +168,16 @@ def calc_stat(data, all_count, all_time, report_size):
         return None
 
 
-def create_report(data, rep_file, rep_path):
+def create_report(data, log_date, rep_path):
     """
     fill template and save it to report file
     :param data: json data
-    :param rep_file: report file name
+    :param log_date: date of log
     :param rep_path: report path
     :return: none
     """
-    rep_file = os.path.join(rep_path, rep_file)
+    report_date = datetime.strftime(log_date, '%Y.%m.%d')
+    rep_file = os.path.join(rep_path, f'report-{report_date}.html')
     logging.info(rep_file)
     if data and len(data) > 0:
         try:
@@ -212,79 +192,63 @@ def create_report(data, rep_file, rep_path):
         logging.info(f'report created: "{rep_file}"')
 
 
-def parse_filename_extension(extension):
-    """
-    try to parse log file extension
-    :param extension:
-    :return: list of date parts from file extension or None if file not correct log file
-    """
-    regex = 'log-(?P<dateandtime>\d{8})'
-    x = re.search(regex, extension)
-    try:
-        st = x.group('dateandtime')
-        datetime.strptime(st, '%Y%m%d')
-        return st[0:4], st[4:6], st[6:8]
-    except Exception:
-        return None
-
-
-def find_log_files(log_folder):
+def find_log_file(log_path):
     """
     make dict: {date, log_file_name, report_file_name, is_gz: Boolean}
-    :param log_folder: logs files folder
+    :param log_path: logs files path
     :return: dict: {date, log_file_name, report_file_name, is_gz: Boolean}
     """
-    if not Path(log_folder).is_dir():
-        logging.error(f'"{log_folder}" is not a folder')
+    if not Path(log_path).is_dir():
+        print(f'"{log_path}" is not a folder')
         return None
 
-    result = list()
-    for filename in os.listdir(log_folder):
-        fname = os.path.basename(filename).split('.')
-        if len(fname) > 1 and fname[0] == 'nginx-access-ui':
-            date_parts = parse_filename_extension(fname[1])
-            if date_parts:
-                row = dict()
-                row['rep_file'] = 'report-' + '.'.join(date_parts) + '.html'
-                row['date'] = ''.join(date_parts)
-                row['log_file'] = log_folder + filename
-                row['gz'] = True if len(fname) == 3 and fname[2] == 'gz' else False
-                result.append(row)
-    result = sorted(result, key=lambda k: k['date'], reverse=True)
-    return result[0] if len(result) > 0 else None
+    result = {}
+    for filename in os.listdir(log_path):
+        regex = 'nginx-access.ui.log-(?P<date>\d{8})(?:(?P<gz>.gz$)?)'
+        x = re.match(regex, filename)
+        try:
+            if x:
+                file_date = datetime.strptime(x.group('date'), '%Y%m%d')
+                if not result or file_date > result['date']:
+                    result['log_file'] = os.path.join(log_path, filename)
+                    result['date'] = file_date
+                    result['gz'] = True if x.group('gz') else False
+        except Exception as e:
+            print(e)
+    return result if len(result) > 0 else None
 
 
 def main(internal_config):
-    try:
-        cfg = load_config(internal_config, get_config_filename())
-        if not cfg:
-            return
-        logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
-                            level=logging.INFO, filename=cfg['LOG_FILE'])
+    cfg = load_config(internal_config, get_config_filename())
+    if not cfg:
+        return
+    logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
+                        level=logging.INFO, filename=cfg['LOG_FILE'])
 
-        log_folder = os.path.join(cfg['LOG_DIR'], '')
-        rep_folder = os.path.join(cfg['REPORT_DIR'], '')
-        log_file = find_log_files(log_folder)
+    log_folder = os.path.join(cfg['LOG_DIR'], '')
+    rep_folder = os.path.join(cfg['REPORT_DIR'], '')
+    log_desc = find_log_file(log_folder)
 
-        if log_file is None:
-            logging.info(f'the folder: {log_folder} has no files to process')
-            return
+    if log_desc is None:
+        logging.info(f'the folder: {log_folder} has no files to process')
+        return
 
-        data, all_time, count, error_count = parse_log(log_file['log_file'], log_file['gz'])
-        if data is None:
-            return
-        error_percent = (error_count / count) * 100
-        logging.info(f'row count is: {count}, errors count is: {error_count}, '
-                     f'errors percent is: {error_percent:.2f}')
-        if error_percent > cfg['ERROR_PERCENT']:
-            logging.info(f'error percent({error_percent:.2f}) '
-                         f'exceeded specified value({cfg["ERROR_PERCENT"]:.2f}), cannot create report')
-            return
-        json_data = calc_stat(data, count, all_time, cfg['REPORT_SIZE'])
-        create_report(json_data, log_file['rep_file'], rep_folder)
-    except:
-        logging.exception('unexpected error')
+    data, all_time, count, error_count = parse_log(log_desc['log_file'], log_desc['gz'])
+    if data is None:
+        return
+    error_percent = (error_count / count) * 100
+    logging.info(f'row count is: {count}, errors count is: {error_count}, '
+                 f'errors percent is: {error_percent:.2f}')
+    if error_percent > cfg['ERROR_PERCENT']:
+        logging.info(f'error percent({error_percent:.2f}) '
+                     f'exceeded specified value({cfg["ERROR_PERCENT"]:.2f}), cannot create report')
+        return
+    json_data = calc_stat(data, count, all_time, cfg['REPORT_SIZE'])
+    create_report(json_data, log_desc['date'], rep_folder)
 
 
 if __name__ == "__main__":
-    main(config)
+    try:
+        main(config)
+    except:
+        logging.exception('unexpected error')
