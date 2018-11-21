@@ -81,7 +81,6 @@ def check_float(v):
 def parse_line(line):
     """
     parse line
-
     simple split line by ' ', check [7] and [-1] values
     :param line:
     :return: url(str), duration(float)
@@ -169,29 +168,26 @@ def calc_stat(data, all_count, all_time, report_size):
         return None
 
 
-def create_report(data, log_date, rep_path):
+def create_report(data, rep_file):
     """
     fill template and save it to report file
     :param data: json data
-    :param log_date: date of log
-    :param rep_path: report path
+    :param rep_file: report file name
     :return: none
     """
-    pathlib.Path(rep_path).mkdir(parents=True, exist_ok=True)
-    report_date = datetime.strftime(log_date, '%Y.%m.%d')
-    rep_file = os.path.join(rep_path, f'report-{report_date}.html')
+    if not data:
+        return
     logging.info(rep_file)
-    if data and len(data) > 0:
-        try:
-            with open('report.html', 'r') as f:
-                template = Template(f.read())
-                report_body = template.safe_substitute(table_json=data)
-            with open(rep_file, 'w') as out:
-                out.write(report_body)
-        except Exception as e:
-            logging.error(e)
-            return
-        logging.info(f'report created: "{rep_file}"')
+    try:
+        with open('report.html', 'r') as f:
+            template = Template(f.read())
+            report_body = template.safe_substitute(table_json=data)
+        with open(rep_file, 'w') as out:
+            out.write(report_body)
+    except Exception as e:
+        logging.error(e)
+        return
+    logging.info(f'report created: "{rep_file}"')
 
 
 def find_log_file(log_path):
@@ -201,23 +197,40 @@ def find_log_file(log_path):
     :return: dict: {date, log_file_name, report_file_name, is_gz: Boolean}
     """
     if not Path(log_path).is_dir():
-        print(f'"{log_path}" is not a folder')
+        logging.error(f'"{log_path}" is not a folder')
         return None
 
     result = {}
     for filename in os.listdir(log_path):
         regex = 'nginx-access.ui.log-(?P<date>\d{8})(?:(?P<gz>.gz$)?)'
         x = re.match(regex, filename)
+        if not x:
+            continue
         try:
-            if x:
-                file_date = datetime.strptime(x.group('date'), '%Y%m%d')
-                if not result or file_date > result['date']:
-                    result['log_file'] = os.path.join(log_path, filename)
-                    result['date'] = file_date
-                    result['gz'] = True if x.group('gz') else False
-        except Exception as e:
-            print(e)
-    return result if len(result) > 0 else None
+            file_date = datetime.strptime(x.group('date'), '%Y%m%d')
+            if not result or file_date > result['date']:
+                result['log_file'] = os.path.join(log_path, filename)
+                result['date'] = file_date
+                result['gz'] = True if x.group('gz') else False
+        except Exception:
+            continue
+    return result or None
+
+
+def check_report(log_date, rep_path):
+    """
+    check if report already exists.
+    :param log_date: log file date
+    :param rep_path: report folder
+    :return: None if report exists, report file name if not
+    """
+    report_date = datetime.strftime(log_date, '%Y.%m.%d')
+    rep_file = os.path.join(rep_path, f'report-{report_date}.html')
+    if os.path.isfile(rep_file):
+        logging.info(f'{rep_file} already exists')
+        return None
+    pathlib.Path(rep_path).mkdir(parents=True, exist_ok=True)
+    return rep_file
 
 
 def main(internal_config):
@@ -227,12 +240,16 @@ def main(internal_config):
     logging.basicConfig(format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S',
                         level=logging.INFO, filename=cfg['LOG_FILE'])
 
-    log_folder = os.path.join(cfg['LOG_DIR'], '')
-    rep_folder = os.path.join(cfg['REPORT_DIR'], '')
+    log_folder = cfg['LOG_DIR']
+    rep_folder = cfg['REPORT_DIR']
     log_desc = find_log_file(log_folder)
 
-    if log_desc is None:
+    if not log_desc:
         logging.info(f'the folder: {log_folder} has no files to process')
+        return
+
+    rep_file_name = check_report(log_desc['date'], rep_folder)
+    if not rep_file_name:
         return
 
     data, all_time, count, error_count = parse_log(log_desc['log_file'], log_desc['gz'])
@@ -246,11 +263,11 @@ def main(internal_config):
                      f'exceeded specified value({cfg["ERROR_PERCENT"]:.2f}), cannot create report')
         return
     json_data = calc_stat(data, count, all_time, cfg['REPORT_SIZE'])
-    create_report(json_data, log_desc['date'], rep_folder)
+    create_report(json_data, rep_file_name)
 
 
 if __name__ == "__main__":
     try:
-        main(config)
+        main(config.copy())
     except:
         logging.exception('unexpected error')
